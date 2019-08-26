@@ -1,0 +1,185 @@
+---
+title: "Practical Machine Learning Final Project"
+author: "Mahbubur Rashid"
+date: "8/25/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r warning=FALSE, error=FALSE}
+library(rattle)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(corrplot)
+library(randomForest)
+library(RColorBrewer)
+library(RCurl)
+```
+
+## Executive Summary
+
+Personal wearable devices such as Jawbone Up, Nike FuelBand, and Fitbit provide an inexpensive way to collect a large amount of activity data of the respective users. The collected data is usually related to measurements taken about the users activity regularly to to find patterns in their behavior. However such measurements are mostly used to quantify how much of a particular activity the users are doing but almost never used to quantify the quality of the activity of the user. This project attempts to predict how well the user is perform a particular exercise.
+
+## Data Source
+
+The data used in this project are obtained from the following URLs:
+
+The training data: [https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+The test data: [https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+The original source of the data is: [http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har)
+
+## Reading Data
+
+In this section first We set a particular seed so that we get the same result for repeated execution of the R code that follows:  
+
+```{r warning=FALSE, error=FALSE}
+set.seed(2403)
+```
+
+Next we read the .csv files from the source directly into R dataframes:
+
+```{r}
+# Get training data
+train_d <- getURL('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv')
+train_df <- read.csv(text = train_d)
+dim(train_df)
+#head(train_df)
+
+# Get test data
+test_d <- getURL('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv')
+test_df <- read.csv(text = test_d)
+dim(test_df)
+#head(test_df)
+```
+
+An examination of the training and testing dataframes shows that there are `r dim(train_df)[1]` observations and `r dim(train_df)[2]` input variables in the training dataset and `r dim(test_df)[1]` observations and `r dim(test_df)[2]` input variables in the test dataset. The target variable (target of prediction) is the `classe` variable. Value of this variable is the intended outcome to predict.  
+
+
+## Cleaning Data
+
+In this step we will remove input variables that have near-zero-variance, NA's, and input variables that donot have much influence on the outcome variable.
+
+1. Removing <b>Near Zero Variance</b> variables:  
+```{r warning=FALSE, error=FALSE}
+NZV <- nearZeroVar(train_df, saveMetrics = TRUE)
+head(NZV, 20)
+train_df <- train_df[, !NZV$nzv]
+test_df <- test_df[, !NZV$nzv]
+dim(train_df)
+dim(test_df)
+rm(NZV)
+```  
+
+2. Removing variables that contains <b>NA's</b>:
+```{r warning=FALSE, error=FALSE}
+cond <- (colSums(is.na(train_df)) == 0)
+train_df <- train_df[, cond]
+test_df <- test_df[, cond]
+rm(cond)
+dim(train_df)
+dim(test_df)
+```
+
+3. Removing variable the do not influence the outcome variable <b>classe</b>:
+
+```{r warning=FALSE, error=FALSE}
+regex <- grepl("^X|timestamp|user_name", names(train_df))
+train_df <- train_df[, !regex]
+test_df <- test_df[, !regex]
+rm(regex)
+dim(train_df)
+dim(test_df)
+```
+
+The cleaned data set contains `r dim(train_df)[1]` observations and `r dim(train_df)[2]` input variables in the training set and `r dim(test_df)[1]` observations and `r dim(test_df)[2]` input variables in the test set. A correlation matrix of the input variables in the training set is seen below:
+
+```{r warning=FALSE, error=FALSE}
+corrplot(cor(train_df[, -length(names(train_df))]), method = "color", tl.cex = 0.5)
+```  
+
+## validation Set Generation
+
+In this step we partition the training dataset and one of the partitions will be considered a <b>Validation Set</b> for the trained models. The split is made with 80% as training and 20% as validation data.
+
+```{r warning=FALSE, error=FALSE}
+set.seed(2403) # For reproducibile purpose
+train_set <- createDataPartition(train_df$classe, p = 0.80, list = FALSE)
+validation_df <- train_df[-train_set, ]
+training_df <- train_df[train_set, ]
+train_df <- training_df
+```
+
+At this point the training set contains `r dim(train_df)[1]` observations and `r dim(train_df)[2]` input variables and the validation set contains `r dim(validation_df)[1]` observations and `r dim(validation_df)[2]` input variables.
+
+# Decision Tree and Random Forest Model Fits
+
+In this step we fit two models to the data, a decision tree and a random forest.
+
+1. Decision Tree:
+
+```{r warning=FALSE, error=FALSE}
+decisionTree <- rpart(classe ~ ., data = train_df, method = "class")
+prp(decisionTree)
+```  
+
+A graphical representation of the decision tree is given below:
+
+```{r}
+fancyRpartPlot(decisionTree, sub = "The Decision Tree")
+```
+
+We now estimate the decision tree model performance on the <b>validation</b> set.  
+```{r warning=FALSE, error=FALSE}
+prediction <- predict(decisionTree, validation_df, type = "class")
+confusionMatrix(prediction, validation_df$classe)
+accuracy <- postResample(prediction, validation_df$classe)
+ose <- 1 - as.numeric(confusionMatrix(validation_df$classe, prediction)$overall[1])
+```  
+
+The Estimated Accuracy of the <b>Decision Tree</b> Model is `r accuracy[1]*100`% and the Estimated Out-of-Sample Error is `r ose*100`%.  
+
+2. Random Forest:
+
+The <b>Random Forest (RF)</b> algorithm selects critical input variables automatically. In additon the algorithm is also robust to outliers in general.  
+We will use a <b>5-fold cross validation</b> scheme for the RF algorithm.  
+```{r warning=FALSE, error=FALSE}
+rf_5_fold <- train(classe ~ ., data = train_df, method = "rf", trControl = trainControl(method = "cv", 5), ntree = 250)
+rf_5_fold
+```  
+
+We now estimate the random forest model performance on the <b>validation</b> set.  
+```{r warning=FALSE, error=FALSE}
+prediction <- predict(rf_5_fold, validation_df)
+confusionMatrix(validation_df$classe, prediction)
+accuracy <- postResample(prediction, validation_df$classe)
+ose <- 1 - as.numeric(confusionMatrix(validation_df$classe, prediction)$overall[1])
+```  
+
+The Estimated Accuracy of the Random Forest Model is `r accuracy[1]*100`% and the Estimated Out-of-Sample Error is `r ose*100`%. As expected the Random Forest model has much better prediction accuracy.  
+
+Since the accuracy of the Random Forest model is much higher we apply RF to the test dataset for predicting the quality of the manner of the exercise performance. We will remove the <b>problem_id</b> input variable prior to applying the RF model
+
+```{r warning=FALSE, error=FALSE}
+test_set_prediction <- predict(rf_5_fold, test_df[, -length(names(test_df))])
+```
+
+Lastly we write the prediction results to file in the local filesystem which will be submitted as part of the requirements for the final project assignment.
+
+```{r  warning=FALSE, error=FALSE}
+setwd("C:/Users/RDITLMR9/Desktop/ERDC Data Science/Johns Hopkins Univertisy/8. Practical Machine Learning/Project")
+write_test_predictions_to_file = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+write_test_predictions_to_file(test_set_prediction)
+```
