@@ -103,7 +103,7 @@ The cleaned data set contains `r dim(train_df)[1]` observations and `r dim(train
 corrplot(cor(train_df[, -length(names(train_df))]), method = "color", tl.cex = 0.5)
 ```  
 
-## validation Set Generation
+## Validation Set Generation
 
 In this step we partition the training dataset and one of the partitions will be considered a <b>Validation Set</b> for the trained models. The split is made with 80% as training and 20% as validation data.
 
